@@ -158,3 +158,30 @@ There are multiple ways to launch your own agent to control the vehicles.
 
 - The first one is creating a new package for your agent in the `/sim_ws` workspace inside the sim container. After launch the simulation, launch the agent node in another bash session while the sim is running.
 - The second one is to create a new ROS 2 container for you agent node. Then create your own package and nodes inside. Launch the sim container and the agent container both. With default networking configurations for `docker`, the behavior is to put The two containers on the same network, and they should be able to discover and talk to each other on different topics. If you're using noVNC, create a new service in `docker-compose.yml` for your agent node. You'll also have to put your container on the same network as the sim and novnc containers.
+
+# RoboRacer Demo and Platform Guide
+
+This fork adds a two-car autonomous demo (`gap_follow.py`) and a guide for using this
+simulator as a stepping stone to real RoboRacer vehicles for Robotics Lab capstone projects.
+
+**➡️ [RoboRacer Platform Guide: Simulation to Real Vehicle](docs/ROBORACER_PLATFORM.md)**
+
+The guide covers:
+
+- **Running the demo.** Two cars explore the hallway entry ways, stay inside the building,
+  dodge each other, and park back in the start hallway.
+- **Main software components.** A block diagram of the simulator, the ROS 2 bridge, the
+  map server, RViz and the controller.
+- **Control and data flow** inside the controller (geofence → planner → Follow-the-Gap),
+  plus its behaviour state machine.
+- **What moves from the simulation to the real RoboRacer** unchanged.
+- **What changes or must be built** for the real car: drivers, localization, safety layer.
+- **Calibration and mapping steps** for a floor of the engineering building.
+- **Suggested capstone work packages.**
+
+Quick start (with `num_agent: 2` and `sy1: 0.0` in `config/sim.yaml`, then `colcon build`):
+
+```bash
+python3 /sim_ws/src/f1tenth_gym_ros/gap_follow.py          # ego car
+python3 /sim_ws/src/f1tenth_gym_ros/gap_follow.py --opp    # opponent car (second terminal)
+```
