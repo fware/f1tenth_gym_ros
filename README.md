@@ -177,7 +177,10 @@ The guide covers:
 - **What moves from the simulation to the real RoboRacer** unchanged.
 - **What changes or must be built** for the real car: drivers, localization, safety layer.
 - **Calibration and mapping steps** for a floor of the engineering building.
-- **Suggested capstone work packages.**
+- **How the real LiDAR works**, and viewing the real cars in RViz.
+- **Capstone program:** separate teams for each subsystem, plus an integration capstone that
+  delivers the complete two-car system, with timeline and milestones.
+- **Glossary** of terms (gym, ROS 2, node, topic, TF, URDF, geofence, SLAM, and more).
 
 Quick start (with `num_agent: 2` and `sy1: 0.0` in `config/sim.yaml`, then `colcon build`):
 

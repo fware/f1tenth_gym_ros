@@ -10,7 +10,8 @@ in the Robotics Lab. It covers:
 4. [What moves from the simulation to the real RoboRacer](#4-what-moves-from-the-simulation-to-the-real-roboracer)
 5. [What changes or must be built for the real RoboRacer](#5-what-changes-or-must-be-built-for-the-real-roboracer)
 6. [Calibration and mapping a floor of the engineering building](#6-calibration-and-mapping-a-floor-of-the-engineering-building)
-7. [Suggested capstone work packages](#7-suggested-capstone-work-packages)
+7. [Capstone program: separate teams, one integrated system](#7-capstone-program-separate-teams-one-integrated-system)
+8. [Glossary](#8-glossary)
 
 ---
 
@@ -279,6 +280,77 @@ flowchart LR
 | **Packaging** | Script run by hand | Turn the controller into a proper ROS 2 package with a launch file, ROS parameters instead of constants, and a systemd/launch-at-boot option. |
 | **Multi-car** | Both cars in one process space | Each car runs its own ROS 2 graph (different `ROS_DOMAIN_ID`s or namespaces). Sharing positions between cars needs a network link (Wi-Fi). |
 
+### How the real LiDAR works
+
+The real car carries a 2D scanning LiDAR, typically a Hokuyo UST-10LX, the sensor the
+simulator models. It does **not** send a continuous beam that bounces back and forth.
+It works like this:
+
+1. A laser diode fires a **very short pulse of invisible infrared light** (eye-safe, Class 1).
+2. A **spinning mirror** inside the sensor sends each pulse in a slightly different
+   direction. The Hokuyo covers 270° in 0.25° steps.
+3. The pulse hits the **first surface in its path**: a wall, a person's leg, the other
+   car. A tiny fraction of the light scatters back to the sensor. It does not ricochet
+   on to other surfaces, and only the first thing hit counts.
+4. The sensor measures the **round-trip time** (time of flight). Light covers about
+   30 cm per nanosecond, so a wall 5 m away echoes back in about 33 ns. Distance =
+   speed of light × time ÷ 2.
+5. One full sweep gives about **1081 distances**, repeated **40 times per second** (about
+   43,000 measurements per second). Range is about 0.06–10 m.
+
+```mermaid
+flowchart LR
+    L["LiDAR<br/>pulse + spinning mirror"] -- "IR pulse out" --> W["First surface hit<br/>(wall, person, other car)"]
+    W -- "weak echo back" --> L
+    L -- "time of flight → distance,<br/>1081 angles × 40 Hz" --> D["urg_node driver"]
+    D -- "/scan  LaserScan" --> C["Controller<br/>(same code as in sim)"]
+```
+
+The driver publishes each sweep as a `LaserScan` message on `/scan`, the **same message
+the simulator produces**. The controller cannot tell the difference. That is why the
+code moves over unchanged.
+
+**Where the "walls" come from.** Follow-the-Gap steers using the **live scan only**,
+in the simulator too. The map is used for two other things: the geofence (virtual
+walls) and route planning. On the real car the walls in the scan are real echoes. The
+map is one *you* build by driving the car through the building once with SLAM
+(section 6). It replaces `maps/levine.*`.
+
+**Real-world limits the simulator does not have:**
+
+* **Glass and mirrors:** light passes through glass or reflects away, so glass walls may
+  look like open space. Close them off in the map.
+* **Dark or shiny surfaces** return weak echoes and may read as "nothing there".
+* **It sees one horizontal slice** at the sensor's height (around 15–20 cm off the floor).
+  It misses table tops, overhanging objects and **drop-offs such as stairs**.
+* **Rear blind spot:** 270° coverage leaves 90° behind the car unseen.
+* Noise of a centimetre or two, occasional missing readings, and rare interference from
+  another LiDAR nearby. The driver and controller already ignore invalid readings.
+
+### Seeing the real cars in RViz
+
+Yes. RViz works the same way with real cars. ROS 2 nodes find each other over the
+network, so a **laptop on the same Wi-Fi network** (same `ROS_DOMAIN_ID`) can run RViz
+and show, live:
+
+* the **building map** you created,
+* each car's **estimated position** on that map (from localization),
+* the **live LiDAR points** laid over the map. When localization is good, the points
+  line up with the map's walls, which makes a useful health check,
+* the **planned path** and the current waypoint.
+
+Each car runs in its own namespace (for example `/car1/...`, `/car2/...`), so one RViz
+window can show both cars, just like the simulator.
+
+Practical notes:
+
+* **Campus Wi-Fi often blocks the multicast traffic** ROS 2 uses to discover nodes. Use a
+  dedicated lab router, or configure a Fast DDS *discovery server*.
+* Avoid streaming heavy data such as camera images over Wi-Fi. LiDAR scans and poses are
+  small and fine.
+* **Foxglove Studio** is a browser-based alternative to RViz that also suits a
+  presentation screen.
+
 ---
 
 ## 6. Calibration and mapping a floor of the engineering building
@@ -348,16 +420,141 @@ flowchart TD
 
 ---
 
-## 7. Suggested capstone work packages
+## 7. Capstone program: separate teams, one integrated system
 
-Each item maps to one block in the diagrams above. Teams of 3–4 students could each take one:
+### The approach
 
-| Work package | Deliverable |
+The RoboRacer is a **system of systems**: hardware, sensing, mapping, localization,
+safety, planning and coordination. That makes it a natural fit for **several capstone
+teams working in parallel**, each owning one subsystem, with an **integration capstone**
+that brings them together. The final deliverable is **one complete autonomous system**.
+
+What makes this work is the **ROS 2 interface contract**. Teams agree early on the
+topics and message types between subsystems (the tables in sections 2 and 5). Each team
+can then build and test its part on its own, against the simulator or recorded data,
+and plug it in later without rewriting anyone else's work. This mirrors how industry
+builds autonomous vehicles, and it gives every team a clear, assessable scope.
+
+**The ultimate goal (integration capstone):**
+
+> Two RoboRacer cars autonomously tour a floor of the engineering building. They
+> explore its entry ways, avoid people and each other, stay inside geofenced areas, and
+> park back at their start. A team monitors them live in RViz, with a human safety
+> operator able to stop either car at any time.
+
+This is the simulator demo, made real.
+
+### How the teams fit together
+
+```mermaid
+flowchart TB
+    subgraph CAR["On each car"]
+        T1["Team 1: Vehicle Platform<br/>chassis, power, VESC, e-stop"]
+        T2["Team 2: Sensing & Mapping<br/>LiDAR driver, SLAM, geofence map"]
+        T3["Team 3: Localization<br/>odometry, IMU, particle filter"]
+        T4["Team 4: Safety & Supervision<br/>emergency braking, deadman, mux"]
+        T5["Team 5: Planning & Control<br/>routes, path following, K-turns"]
+    end
+    T6["Team 6: Multi-Car & Operations<br/>networking, coordination, RViz station"]
+    T7["Team 7: Simulation & Test<br/>building digital twin, regression tests"]
+    INT(["Integration Capstone<br/>complete two-car autonomous system"])
+
+    T2 -- "/scan, building map" --> T3
+    T2 -- "/scan, geofence map" --> T5
+    T3 -- "pose on map (TF)" --> T5
+    T5 -- "/drive request" --> T4
+    T4 -- "safe /drive" --> T1
+    T1 -- "wheel odometry" --> T3
+    T3 -- "pose" --> T6
+    T6 -- "other car's pose" --> T5
+    T7 -. "test every module before it touches a car" .-> CAR
+    CAR --> INT
+    T6 --> INT
+    T7 --> INT
+```
+
+### The capstones
+
+| # | Capstone | Scope | Delivers (interface) | Needs from | Good fit for |
+|---|---|---|---|---|---|
+| 1 | **Vehicle Platform** | Build and wire the cars: chassis, battery and power, onboard computer, VESC motor/servo controller, physical e-stop. Calibrate steering, speed and LiDAR mount. | A drivable car that accepts `/drive` and publishes wheel odometry. Calibration procedure document. | Nothing (starts first) | ME, EE |
+| 2 | **Sensing & Mapping** | LiDAR driver and filtering, SLAM mapping of a building floor, map cleanup and **geofence** editing, site survey of hazards. | Reliable `/scan`. Building map files (`.pgm` + `.yaml`). Map-editing guidelines. | Team 1 (a car to carry the LiDAR) | CompE, CS, EE |
+| 3 | **Localization & State Estimation** | Fuse wheel odometry and IMU. Run a particle filter (or AMCL) on the building map. Measure accuracy. | The car's pose on the map (`map → base_link` TF), with an accuracy report. | Teams 1, 2 | ME, CompE, CS |
+| 4 | **Safety & Supervision** | Automatic emergency braking (time-to-collision), deadman joystick, command multiplexer, speed limits, watchdogs (stop if a node or the network dies). | A safety layer between planner and motors that **always** has the final say. Test evidence. | Teams 1, 2 | EE, CompE |
+| 5 | **Planning & Control** | Turn `gap_follow.py` into a proper ROS 2 package. Route and waypoint tools. Better path following (pure pursuit / MPC). Tune for real dynamics. | `/drive` requests that follow routes in the building. Parameter guide. | Teams 2, 3 (sim until then) | ME, CS |
+| 6 | **Multi-Car Coordination & Operations** | Lab network and ROS 2 discovery, sharing positions between cars, right-of-way rules in narrow hallways, operator station (RViz/Foxglove dashboard, start/stop controls). | Two cars that know about each other. An operator console. | Teams 3, 5 | CS, CompE |
+| 7 | **Simulation & Test** | Load the building map into this simulator (a "digital twin"). Automated regression tests. Rosbag record/replay tools. Optional machine-learning driving comparison. | A test bench every team uses before touching a real car. | Team 2 (building map). Can start on Levine. | CS |
+| ★ | **Integration Capstone** | Owns the interface contract, system-level requirements, integration schedule, safety case and the final demonstration. Can be its own team, or the leads of Teams 1–7 acting together. | **The complete two-car autonomous building tour.** | All teams | Systems / any |
+
+Teams 5, 6 and 7 can start on day one using this simulator. Teams 2–4 begin in the
+simulator and move to hardware as soon as Team 1 has a car driving.
+
+### Suggested timeline (two semesters)
+
+```mermaid
+gantt
+    title RoboRacer capstone program (one academic year)
+    dateFormat  YYYY-MM-DD
+    axisFormat  %b
+    section All teams
+    Interface contract agreed            :milestone, m1, 2027-09-20, 0d
+    Final integrated demonstration       :milestone, m5, 2028-04-24, 0d
+    section Semester 1
+    Car build and calibration (T1)        :t1, 2027-09-01, 10w
+    Modules built and tested in sim (T2-T7) :s1, 2027-09-01, 12w
+    Building mapped and geofenced (T2)    :t2, after t1, 4w
+    Each module working on one car        :m3, after t2, 2w
+    section Semester 2
+    Pairwise integration (sense, localize, plan, safety) :i1, 2028-01-15, 6w
+    Full single-car autonomy in building  :i2, after i1, 3w
+    Two-car operation and dress rehearsals :i3, after i2, 4w
+```
+
+*Dates are placeholders for a fall-to-spring academic year. Shift them to the real calendar.*
+
+| Milestone | Evidence |
 |---|---|
-| Vehicle build and calibration | Assembled car, calibrated VESC, servo and LiDAR, documented procedure |
-| Mapping and geofencing | Cleaned map of an engineering-building floor, map-editing guidelines |
-| Localization | Particle filter tuned on the building map, accuracy report |
-| Safety layer | Emergency braking + deadman + speed limiting, tested and documented |
-| Planning and control | Port of `gap_follow.py` into a ROS 2 package with parameters. Pure pursuit / MPC improvements |
-| Multi-car coordination | Sharing positions between cars, right-of-way rules in hallways |
-| Learning-based driving (stretch) | Imitation or reinforcement learning policy trained in this simulator on the building map, compared with Follow-the-Gap |
+| **M1: Interface contract** (week 3) | Agreed list of topics, message types, frames and units, signed off by every team |
+| **M2: Works in simulation** (week 8) | Each module demonstrated against this simulator or recorded data |
+| **M3: Works on hardware** (end of semester 1) | Each module demonstrated on a real car in isolation |
+| **M4: Single-car autonomy** (mid semester 2) | One car completes a building route with safety layer active |
+| **M5: Final demonstration** (end of semester 2) | Two cars complete the building tour. Each team presents its subsystem and its part in the whole |
+
+**Scaling options:** with fewer students, combine Teams 3 + 5 and Teams 6 + 7. Across
+multiple years, year one delivers single-car autonomy and year two adds multi-car
+operation and learning-based driving, reusing year one's hardware and software.
+
+---
+
+## 8. Glossary
+
+| Term | Meaning |
+|---|---|
+| **Ackermann steering** | Car-style steering, where the front wheels turn and the car follows an arc. Commands are a speed plus a steering angle (`AckermannDriveStamped`). |
+| **AEB / TTC** | Automatic Emergency Braking using Time-To-Collision: if distance ÷ closing speed drops below a threshold, brake regardless of what the planner says. |
+| **Controller** | In this guide, the **autonomy software that drives the car**: `gap_follow.py`, one ROS 2 node per car. It reads the LiDAR scan and position and sends speed and steering commands. On the real car it runs **onboard**, on the car's own computer, not on a remote control. Not to be confused with the *VESC* (the hardware motor controller) or the joystick (the human override). |
+| **Deadman switch** | A button the safety operator must hold for the car to drive autonomously. Releasing it stops the car. |
+| **Docker / container** | A packaged, self-contained Linux environment. The simulator runs in one so it behaves the same on every computer. |
+| **Follow-the-Gap** | A reactive driving method: find the widest or deepest open "gap" in the LiDAR scan and steer into it. |
+| **Frame** | A coordinate system attached to something: `map` (the building), `base_link` (the car body), `laser` (the LiDAR). |
+| **Geofence** | A **virtual boundary drawn in software** that the car treats as a wall, although nothing physical is there. In this project it is painted into the map: anything that is not known free hallway, such as open ends, off-limits doorways and stairwells, is ray-cast as a "virtual wall" and merged into the LiDAR scan. The car's reactive driving then avoids it like a real wall. It is only as accurate as the car's position estimate, so leave margin, and keep physical barriers at real hazards such as stairs. |
+| **Gym** | A standard Python interface for simulators (`reset()`, `step(action)`), from OpenAI Gym / Gymnasium. **f1tenth_gym** is the F1TENTH car simulator built on it, which also makes it ready for machine-learning experiments. |
+| **LaserScan** | The ROS message holding one LiDAR sweep: start angle, angle step, and a list of distances. Identical from the simulator and from the real sensor. |
+| **LiDAR** | Light Detection And Ranging: measures distance by timing short laser pulses reflected off surfaces. The RoboRacer's LiDAR sweeps a 270° horizontal slice 40 times per second. |
+| **Localization** | Working out where the car is on a known map, by matching live LiDAR scans to the map (e.g. with a particle filter or AMCL). The simulator skips this because it knows the true position. |
+| **Message** | A typed data structure sent over a topic, e.g. `LaserScan`, `Odometry`, `AckermannDriveStamped`. |
+| **Node** | One running program in a ROS 2 system, such as the LiDAR driver, the controller, or RViz. |
+| **Occupancy grid map** | The building map as an image: white = free, black = wall, grey = unknown, plus a `.yaml` giving the scale (metres per pixel) and origin. |
+| **Odometry** | An estimate of the car's motion and position, from wheel rotation (and optionally an IMU). It drifts over time, which is why localization is needed. |
+| **Publish / subscribe** | How nodes communicate: a node *publishes* messages to a named topic, and any node that *subscribes* receives them. There is no central hub. |
+| **Pure pursuit** | A path-following method: pick a point a fixed distance ahead on the path and steer along the arc that reaches it. |
+| **ROS 2** | Robot Operating System 2: the open-source middleware (not an operating system) that connects nodes, moves data between them, and provides tools such as RViz, TF and rosbag. |
+| **rosbag** | A recording of topic data (e.g. LiDAR and odometry from a real run) that can be replayed later for debugging. |
+| **RViz** | The ROS 3D visualization tool. It **displays** maps, cars, scans and paths, but does not run the simulation. Works the same with real cars over Wi-Fi. |
+| **robot_state_publisher** | The node that reads the robot's URDF and publishes the fixed positions of its parts as TF. |
+| **SLAM** | Simultaneous Localization And Mapping: building a map of an unknown place while tracking where you are in it. Used once to map the building (e.g. `slam_toolbox`). |
+| **TF** (`/tf`, `/tf_static`) | ROS's transform system, which tracks how every frame relates to every other over time. `/tf` carries moving relationships (car on map). `/tf_static` carries fixed ones (LiDAR on chassis). It lets any node convert "2 m ahead of the LiDAR" into a point on the building map. |
+| **Topic** | A named data channel, such as `/scan` or `/drive`. |
+| **URDF / xacro** | Unified Robot Description Format: an XML description of the robot's parts (links) and how they connect (joints). xacro is URDF with macros. The source of the robot's static TF and its 3D model in RViz. |
+| **VESC** | An open-source electronic speed controller that drives the motor and steering servo and reports wheel speed for odometry. |
+| **Waypoint / route** | A named point on the map, such as an entry way, corner or parking spot, and the ordered list of them a car drives through. |
